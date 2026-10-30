@@ -1,11 +1,12 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from app.core.config import settings
-from app.models.base import Base
+from app.database.init import initialize_database
 from app.database.session import engine, SessionLocal
 from app.database.seed import seed_database
 from app.api import auth, services, grievances, chat, admin
@@ -20,17 +21,20 @@ logger = logging.getLogger("public_grievance_api")
 async def lifespan(app: FastAPI):
     logger.info("Initializing database schema and seed data...")
     try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables verified.")
+        initialize_database()
+        logger.info("Database schema ready.")
 
         with SessionLocal() as session:
             seed_database(session)
         logger.info("Database bootstrap & seed sequence complete.")
-    except Exception as e:
-        logger.error(f"Error during database startup bootstrap: {e}")
-    
+    except Exception:
+        # Fail fast instead of serving a broken deployment; Render surfaces the
+        # traceback in the service logs and keeps the previous release active.
+        logger.exception("Database startup bootstrap failed.")
+        raise
+
     yield
-    
+
     logger.info("Shutting down application...")
 
 app = FastAPI(
@@ -74,9 +78,22 @@ def root():
     }
 
 @app.get(f"{settings.API_V1_STR}/health", tags=["Health"])
-def health_check():
+def health_check(response: Response):
+    """Readiness probe used by Render and uptime checks."""
+    database_ok = True
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        database_ok = False
+        logger.exception("Health check database probe failed.")
+
+    if not database_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
     return {
-        "status": "healthy",
+        "status": "healthy" if database_ok else "unhealthy",
         "service": settings.PROJECT_NAME,
-        "database": "connected"
+        "environment": settings.ENVIRONMENT,
+        "database": "connected" if database_ok else "unavailable",
     }

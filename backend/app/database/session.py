@@ -2,6 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
 
+
 def get_database_url() -> str:
     url = settings.DATABASE_URL
     if "aiosqlite" in url:
@@ -12,17 +13,36 @@ def get_database_url() -> str:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
+
 db_url = get_database_url()
+is_sqlite = db_url.startswith("sqlite")
 
 connect_args = {}
-if "sqlite" in db_url:
+engine_options = {
+    "echo": False,
+    "pool_pre_ping": True,
+}
+
+if is_sqlite:
     connect_args["check_same_thread"] = False
+else:
+    # psycopg3 + Supabase's transaction pooler (PgBouncer) do not mix with
+    # server-side prepared statements, so disable them for every PostgreSQL
+    # connection. This also works with a direct Supabase connection.
+    connect_args["prepare_threshold"] = None
+    engine_options.update(
+        {
+            "pool_size": 5,
+            "max_overflow": 10,
+            "pool_recycle": 300,
+            "pool_timeout": 30,
+        }
+    )
 
 engine = create_engine(
     db_url,
-    echo=False,
     connect_args=connect_args,
-    pool_pre_ping=True
+    **engine_options,
 )
 
 SessionLocal = sessionmaker(
@@ -31,6 +51,7 @@ SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False
 )
+
 
 def get_db():
     db = SessionLocal()

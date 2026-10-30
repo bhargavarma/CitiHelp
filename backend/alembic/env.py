@@ -11,15 +11,21 @@ import app.models  # noqa: F401  (registers every model on Base.metadata)
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep application loggers alive when migrations run inside the API
+    # lifespan (otherwise Alembic's logging config silences them).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
+
+# ``alembic upgrade`` from the CLI has no URL in alembic.ini, while startup
+# migrations pass one explicitly. Fall back to the application settings.
+migration_url = config.get_main_option("sqlalchemy.url") or get_database_url()
 
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (emit SQL without a DB connection)."""
     context.configure(
-        url=get_database_url(),
+        url=migration_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -33,7 +39,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode using the synchronous engine."""
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = get_database_url()
+    configuration["sqlalchemy.url"] = migration_url
 
     connectable = engine_from_config(
         configuration,

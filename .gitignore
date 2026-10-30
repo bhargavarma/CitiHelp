@@ -30,6 +30,10 @@ test_uploads/
 *.sqlite
 *.sqlite3
 
+# Deployment CLIs
+.vercel/
+.render/
+
 # IDE
 .vscode/
 .idea/

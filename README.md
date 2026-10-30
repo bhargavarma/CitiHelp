@@ -113,9 +113,11 @@ engine is used. AI grounding is keyword search over curated relational data.
 ```
 Externalsssss/
 ├── README.md
+├── render.yaml              # Render Blueprint (secrets prompted, not committed)
 ├── docs/
 │   ├── API_DOCUMENTATION.md
 │   ├── ARCHITECTURE.md
+│   ├── CLOUD_DEPLOYMENT.md
 │   ├── DATABASE_SCHEMA.md
 │   └── TESTING.md
 ├── backend/
@@ -124,12 +126,14 @@ Externalsssss/
 │   ├── requirements.txt
 │   ├── alembic/versions/0001_initial_schema.py
 │   ├── app/                 # api, core, database, models, schemas, services
-│   ├── scripts/             # seed_data.py, create_admin.py
+│   ├── scripts/             # seed_data.py, create_admin.py,
+│   │                        # migrate_sqlite_to_postgres.py
 │   └── tests/               # conftest.py, test_api.py, test_extended.py,
-│                            # test_admin_dashboard.py
+│                            # test_admin_dashboard.py, test_migration.py
 └── frontend/
     ├── .env.example
     ├── package.json
+    ├── vercel.json          # Vite build + SPA rewrites
     └── src/                 # components, context, pages, services, types
 ```
 
@@ -291,8 +295,9 @@ The output is written to `frontend/dist/`.
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
+| `ENVIRONMENT` | Production | `development` | Set to `production` to enable strict guards |
 | `DATABASE_URL` | Production | `sqlite:///./grievance_dev.db` | PostgreSQL/SQLite connection string |
-| `JWT_SECRET_KEY` | Production | ephemeral generated key | JWT signing secret |
+| `JWT_SECRET_KEY` | Production | ephemeral generated key | JWT signing secret (min 32 chars in production) |
 | `JWT_ALGORITHM` | No | `HS256` | JWT algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | No | `1440` | Token lifetime (24 h) |
 | `GEMINI_API_KEY` | No | empty | Enables Gemini synthesis; empty uses deterministic fallback |
@@ -308,6 +313,9 @@ The output is written to `frontend/dist/`.
 `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` are used only to create a
 missing administrator. They never reset an existing account and never promote an
 existing citizen.
+
+When `ENVIRONMENT=production`, startup refuses to run with a SQLite
+`DATABASE_URL` or a `JWT_SECRET_KEY` shorter than 32 characters.
 
 ### Frontend (`frontend/.env`)
 
@@ -502,48 +510,90 @@ Full request/response examples: [`docs/API_DOCUMENTATION.md`](docs/API_DOCUMENTA
 
 ## 13. Deployment
 
+Production architecture:
+
+```
+Vercel (React/Vite SPA) ──HTTPS──> Render (FastAPI) ──psycopg3──> Supabase PostgreSQL
+                                        └──> Gemini API (server-side only)
+```
+
+The full runbook, including environment setup and verification steps, is in
+[`docs/CLOUD_DEPLOYMENT.md`](docs/CLOUD_DEPLOYMENT.md). The repository contains a
+Render Blueprint (`render.yaml`) and a Vercel configuration
+(`frontend/vercel.json`).
+
 ### Backend — Render
 
+- Service type: Web Service, runtime Python, root directory `backend`
 - Build: `pip install -r requirements.txt`
-- Release/pre-deploy: `alembic upgrade head`
 - Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Health check path: `/api/v1/health`
+- Free plan; the blueprint marks every secret `sync: false` so no value is
+  stored in Git.
+- On PostgreSQL, the app applies Alembic migrations at startup
+  (non-destructive; existing schemas are stamped, never dropped).
 - Set `DATABASE_URL` to the Supabase pooled connection string
-  (`postgresql+psycopg://...`), plus `JWT_SECRET_KEY`, `FRONTEND_URL` and
-  optionally `GEMINI_API_KEY`.
-- Attach a persistent disk for `UPLOAD_DIR` or move uploads to object storage.
+  (`postgresql+psycopg://...:6543/...?sslmode=require`), plus
+  `ENVIRONMENT=production`, `JWT_SECRET_KEY`, `FRONTEND_URL` and the admin
+  bootstrap variables. `GEMINI_API_KEY` is optional.
+- Uploads use the local filesystem. Render's free plan has an ephemeral disk, so
+  attachments do not survive a redeploy; attach a paid persistent disk or move
+  uploads to object storage before relying on them.
 
 ### Frontend — Vercel
 
+- Root directory: `frontend`
 - Framework preset: Vite
 - Build command: `npm run build`
 - Output directory: `dist`
+- SPA rewrites are configured in `frontend/vercel.json`
 - Environment: `VITE_API_BASE_URL=https://<backend-host>/api/v1`
+- Only this public URL belongs in the frontend. Never add `GEMINI_API_KEY`,
+  `DATABASE_URL`, `JWT_SECRET_KEY` or admin bootstrap values to Vercel.
 
 ### Database — Supabase
 
-- Create the project, copy the connection string, and run
-  `alembic upgrade head` against it.
-- Optionally run the seed scripts and create the administrator.
+1. Create the project and copy the **pooled** connection string (port `6543`,
+   `sslmode=require`).
+2. Use it as Render's `DATABASE_URL`; migrations run automatically on first
+   boot.
+3. To preserve local data, run the additive copy script from `backend/`:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m scripts.migrate_sqlite_to_postgres --dry-run
+   .\.venv\Scripts\python.exe -m scripts.migrate_sqlite_to_postgres
+   ```
+
+   The script never updates or deletes rows, preserves IDs/reference numbers and
+   timestamps, remaps users by email and grievances by reference number, and
+   supports `--skip-chat`.
 
 ### Post-deploy checks
 
-1. `GET /api/v1/health` returns `healthy`.
+1. `GET /api/v1/health` returns `healthy` with `"database": "connected"`.
 2. `/api/v1/services` returns 16 seeded services.
 3. Citizen registration and login work.
 4. Admin login reaches `/admin` with real counts.
 5. Grievance submission, attachment upload and status update work end to end.
-6. The AI assistant returns grounded sources for a supported question.
+6. A grievance is still visible after a page refresh and a fresh sign-in.
+7. The AI assistant returns grounded sources for a supported question and a
+   "no verified information" answer for an unsupported one.
 
 ---
 
 ## 14. Known Limitations
 
-- **Missing credentials in this environment:** no real `GEMINI_API_KEY` and no
-  Supabase PostgreSQL connection string were available. Gemini was verified with
-  a mock; migrations were verified on SQLite only.
-- **Real Gemini test is opt-in** and skipped by default.
-- **Uploads use local filesystem storage.** Render instances without a
-  persistent disk lose files on redeploy.
+- **Cloud deployment requires account access.** Supabase project creation,
+  Render authentication and `vercel login` were not available in this
+  environment, so the live services are not deployed yet. See
+  [`docs/CLOUD_DEPLOYMENT.md`](docs/CLOUD_DEPLOYMENT.md) for the exact steps.
+- **Live PostgreSQL was validated offline.** The Alembic PostgreSQL SQL was
+  generated successfully and the copy script is covered by tests, but no live
+  Supabase connection string was available to run against a real server.
+- **Real Gemini test is opt-in** and skipped by default; the deterministic
+  fallback works without a key.
+- **Uploads use local filesystem storage.** Render's free tier has an ephemeral
+  disk, so files are lost on redeploy.
 - **AI retrieval is keyword-based** (`ILIKE`), not semantic; unrelated questions
   intentionally return a "no verified information" response.
 - **No refresh tokens, email verification or password reset** are implemented.

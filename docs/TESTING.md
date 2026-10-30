@@ -2,7 +2,7 @@
 
 > **Project ID:** HACK-P438
 > **Last Updated:** 2026-10-31
-> **Backend result:** `54 passed, 1 skipped`
+> **Backend result:** `59 passed, 1 skipped`
 > **Frontend result:** `npm run build` succeeds
 
 ---
@@ -25,6 +25,8 @@ The backend test suite lives in `backend/tests/`:
 - `test_admin_dashboard.py` — admin authentication, authorization, bootstrap
   safety, register search/filters/sort/pagination, detail/history, status
   updates and dashboard statistics
+- `test_migration.py` — additive SQLite → PostgreSQL copy, idempotency,
+  dry-run rollback, email/reference remapping, health probe
 
 ---
 
@@ -72,7 +74,7 @@ $env:GEMINI_API_KEY = "<real-key>"
 ### Expected output
 
 ```
-54 passed, 1 skipped in ~8s
+59 passed, 1 skipped in ~9s
 ```
 
 Admin suite alone:
@@ -186,7 +188,7 @@ AI:
 
 Health:
 
-- `GET /health` returns `healthy`
+- `GET /health` returns `healthy` with a real `SELECT 1` database probe
 
 ### 4.3 `test_admin_dashboard.py` (14 tests)
 
@@ -224,6 +226,18 @@ Dashboard:
   updates match direct database aggregates
 - `/admin/analytics` agrees with `/admin/stats`
 - Empty search results are handled gracefully
+
+### 4.4 `test_migration.py` (5 tests)
+
+The migration tests run the same ORM-level copy logic used for Supabase against
+two throwaway SQLite files, so they need no external database:
+
+- A full copy inserts every table and a second run is idempotent (0 inserts)
+- `dry_run=True` rolls back and leaves the target empty
+- A pre-existing target user with the same email is reused, not overwritten;
+  grievance, history and chat foreign keys are remapped to the target user id
+- Copying a database onto itself is rejected
+- `GET /health` performs a live database probe and reports `connected`
 
 ---
 

@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Public Grievance AI Assistant"
     API_V1_STR: str = "/api/v1"
 
+    # ``production`` enables strict guards (no SQLite, no ephemeral JWT key).
+    ENVIRONMENT: str = "development"
+
     # Database. SQLite is used for local development; set DATABASE_URL to a
     # Supabase PostgreSQL connection string in production.
     DATABASE_URL: str = "sqlite:///./grievance_dev.db"
@@ -53,6 +56,22 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_settings(self) -> "Settings":
+        is_production = self.ENVIRONMENT.strip().lower() == "production"
+
+        if is_production:
+            # A random per-process key would invalidate every session on each
+            # restart, and SQLite cannot back a multi-instance deployment.
+            if len(self.JWT_SECRET_KEY.strip()) < 32:
+                raise ValueError(
+                    "JWT_SECRET_KEY must be set to at least 32 characters when "
+                    "ENVIRONMENT=production"
+                )
+            if self.DATABASE_URL.strip().lower().startswith("sqlite"):
+                raise ValueError(
+                    "DATABASE_URL must point to PostgreSQL when "
+                    "ENVIRONMENT=production"
+                )
+
         if not self.JWT_SECRET_KEY:
             # Ephemeral fallback keeps local development runnable without a
             # committed secret. Tokens are invalidated when the process restarts.
