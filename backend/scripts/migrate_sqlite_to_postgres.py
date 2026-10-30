@@ -5,6 +5,8 @@ The copy is additive and idempotent:
 * existing rows are never updated or deleted;
 * primary keys, reference numbers and timestamps are preserved;
 * users matched by email are reused and foreign keys are remapped;
+* seeded services and knowledge documents are matched by name/title so a copy
+  onto an already-seeded target does not duplicate them;
 * ``--dry-run`` performs the copy inside a transaction and rolls it back.
 
 Typical usage (from ``backend/``)::
@@ -139,6 +141,35 @@ def copy_database(
                         logger.info(
                             "Grievance %s already exists with a different id; remapping history.",
                             values["reference_number"],
+                        )
+                        continue
+
+                if existing is None and model is Service:
+                    # Seed data is inserted with fresh UUIDs on first boot, so
+                    # match by name to avoid duplicating the service directory.
+                    existing = target_session.scalar(
+                        select(Service).where(Service.name == values["name"])
+                    )
+                    if existing is not None:
+                        skipped += 1
+                        logger.info(
+                            "Service %s already exists with a different id; skipping.",
+                            values["name"],
+                        )
+                        continue
+
+                if existing is None and model is KnowledgeDocument:
+                    # Same reasoning as services: titles are the natural key.
+                    existing = target_session.scalar(
+                        select(KnowledgeDocument).where(
+                            KnowledgeDocument.title == values["title"]
+                        )
+                    )
+                    if existing is not None:
+                        skipped += 1
+                        logger.info(
+                            "Knowledge document %s already exists with a different id; skipping.",
+                            values["title"],
                         )
                         continue
 

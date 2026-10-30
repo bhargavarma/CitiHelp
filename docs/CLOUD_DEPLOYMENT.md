@@ -22,6 +22,19 @@ require account access, and the verification steps to run afterwards.
 Nothing in this document claims a live service exists. The blockers are
 external account access only.
 
+What was verified locally against a real PostgreSQL 17 instance:
+
+- `alembic upgrade head` created all 7 tables plus `alembic_version`
+- production startup (`ENVIRONMENT=production`) seeded 16 services and 20
+  knowledge documents and served a healthy `/api/v1/health`
+- citizen registration/login, grievance creation, listing, persistence across a
+  fresh app lifespan, and citizen→admin 403 enforcement
+- admin login, dashboard stats, status update and history
+- AI assistant: grounded sources for a supported question, zero sources for an
+  unsupported one
+- SQLite → PostgreSQL copy: 12 new rows, 36 seed rows skipped, second run
+  inserted 0 (idempotent), foreign keys and timestamps preserved
+
 ---
 
 ## 2. Prerequisites
@@ -150,6 +163,8 @@ Safety properties:
 - preserves IDs, reference numbers and timestamps
 - matches users by email and grievances by reference number, remapping foreign
   keys instead of duplicating rows
+- matches seeded services by name and knowledge documents by title, so a target
+  that was seeded on first boot is not duplicated
 - never updates or deletes existing target rows
 - refuses to target SQLite unless `--allow-sqlite-target` is passed
 

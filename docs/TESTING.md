@@ -2,7 +2,7 @@
 
 > **Project ID:** HACK-P438
 > **Last Updated:** 2026-10-31
-> **Backend result:** `59 passed, 1 skipped`
+> **Backend result:** `60 passed, 1 skipped`
 > **Frontend result:** `npm run build` succeeds
 
 ---
@@ -74,7 +74,7 @@ $env:GEMINI_API_KEY = "<real-key>"
 ### Expected output
 
 ```
-59 passed, 1 skipped in ~9s
+60 passed, 1 skipped in ~9s
 ```
 
 Admin suite alone:
@@ -227,7 +227,7 @@ Dashboard:
 - `/admin/analytics` agrees with `/admin/stats`
 - Empty search results are handled gracefully
 
-### 4.4 `test_migration.py` (5 tests)
+### 4.4 `test_migration.py` (6 tests)
 
 The migration tests run the same ORM-level copy logic used for Supabase against
 two throwaway SQLite files, so they need no external database:
@@ -236,6 +236,8 @@ two throwaway SQLite files, so they need no external database:
 - `dry_run=True` rolls back and leaves the target empty
 - A pre-existing target user with the same email is reused, not overwritten;
   grievance, history and chat foreign keys are remapped to the target user id
+- Seeded services and knowledge documents are matched by name/title, so a copy
+  onto an already-seeded target does not duplicate them
 - Copying a database onto itself is rejected
 - `GET /health` performs a live database probe and reports `connected`
 

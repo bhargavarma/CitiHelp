@@ -587,9 +587,10 @@ Render Blueprint (`render.yaml`) and a Vercel configuration
   Render authentication and `vercel login` were not available in this
   environment, so the live services are not deployed yet. See
   [`docs/CLOUD_DEPLOYMENT.md`](docs/CLOUD_DEPLOYMENT.md) for the exact steps.
-- **Live PostgreSQL was validated offline.** The Alembic PostgreSQL SQL was
-  generated successfully and the copy script is covered by tests, but no live
-  Supabase connection string was available to run against a real server.
+- **PostgreSQL was verified against a local PostgreSQL 17 instance**, not
+  Supabase itself: Alembic migration, production startup, seeding, health,
+  citizen/admin flows, persistence and the SQLite copy all passed. A live
+  Supabase connection string was not available.
 - **Real Gemini test is opt-in** and skipped by default; the deterministic
   fallback works without a key.
 - **Uploads use local filesystem storage.** Render's free tier has an ephemeral

@@ -12,6 +12,7 @@ from app.core.security import hash_password
 from app.models.base import Base
 from app.models.chat import ChatMessage, ChatSession
 from app.models.grievance import Grievance, GrievanceHistory
+from app.models.knowledge import KnowledgeDocument
 from app.models.service import Service
 from app.models.user import User
 from scripts.migrate_sqlite_to_postgres import copy_database
@@ -55,6 +56,15 @@ def _seed_source(engine) -> None:
                 source_url="https://example.com",
                 last_reviewed="2026-01-01",
                 is_verified=True,
+            )
+        )
+        db.add(
+            KnowledgeDocument(
+                id="doc-source",
+                title="Test Document",
+                content="A knowledge document used by tests.",
+                category="Testing",
+                last_reviewed="2026-01-01",
             )
         )
         db.add(
@@ -178,6 +188,52 @@ def test_existing_email_is_reused_and_foreign_keys_remapped(tmp_path):
     with _session(target) as db:
         user = db.get(User, "user-target")
         assert user.full_name == "Already Here"
+
+
+def test_seeded_rows_are_not_duplicated(tmp_path):
+    """A target seeded on first boot uses fresh UUIDs; match by name/title."""
+    source = _engine(tmp_path / "source.db")
+    target = _engine(tmp_path / "target.db")
+    Base.metadata.create_all(target)
+    _seed_source(source)
+
+    with _session(target) as db:
+        db.add(
+            Service(
+                id="service-target",
+                name="Test Service",
+                category="Already Seeded",
+                department="Seed",
+                description="Seeded on target boot.",
+                eligibility="Everyone",
+                required_documents=[],
+                procedure="Existing.",
+                last_reviewed="2026-01-01",
+                is_verified=True,
+            )
+        )
+        db.add(
+            KnowledgeDocument(
+                id="doc-target",
+                title="Test Document",
+                content="Seeded on target boot.",
+                category="Already Seeded",
+                last_reviewed="2026-01-01",
+            )
+        )
+        db.commit()
+
+    stats = copy_database(source, target)
+
+    assert stats["services"] == {"inserted": 0, "skipped": 1}
+    assert stats["knowledge_documents"] == {"inserted": 0, "skipped": 1}
+    assert _count(target, Service) == 1
+    assert _count(target, KnowledgeDocument) == 1
+
+    with _session(target) as db:
+        # The pre-existing seed row must win; it is never overwritten.
+        assert db.get(Service, "service-target").category == "Already Seeded"
+        assert db.get(KnowledgeDocument, "doc-target").content == "Seeded on target boot."
 
 
 def test_same_source_and_target_is_rejected(tmp_path):
